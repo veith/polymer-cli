@@ -9,6 +9,7 @@
  */
 
 import clone = require('clone');
+import * as del from 'del';
 import * as fs from 'fs';
 import * as gulp from 'gulp';
 import * as gulpif from 'gulp-if';
@@ -20,12 +21,13 @@ import * as logging from 'plylog';
 import {PolymerProject, addServiceWorker, forkStream, DepsIndex, SWConfig} from 'polymer-build';
 
 import {JSOptimizeStream, CSSOptimizeStream, HTMLOptimizeStream} from './optimize-streams';
-
 import {ProjectConfig} from '../project-config';
 import {PrefetchTransform} from './prefetch';
 import {waitFor} from './streams';
 import {parsePreCacheConfig} from './sw-precache';
 
+const BUNDLED_BUILD_DIR = path.join('build', 'bundled');
+const UNBUNDLED_BUILD_DIR = path.join('build', 'unbundled');
 let logger = logging.getLogger('cli.build.build');
 
 export interface BuildOptions {
@@ -48,28 +50,31 @@ export interface BuildOptions {
 
 export function build(options: BuildOptions, config: ProjectConfig): Promise<any> {
 
-  return new Promise<any>((buildResolve, _) => {
-    let polymerProject = new PolymerProject({
-      root: config.root,
-      shell: config.shell,
-      entrypoint: config.entrypoint,
-      fragments: config.fragments,
-      sourceGlobs: options.sources,
-      includeDependencies: options.includeDependencies,
-    });
+  let polymerProject = new PolymerProject({
+    root: config.root,
+    shell: config.shell,
+    entrypoint: config.entrypoint,
+    fragments: config.fragments,
+    sourceGlobs: options.sources,
+    includeDependencies: options.includeDependencies,
+  });
 
-    if (options.insertDependencyLinks) {
-      logger.debug(`Additional dependency links will be inserted into application`);
-    }
+  if (options.insertDependencyLinks) {
+    logger.debug(`Additional dependency links will be inserted into application`);
+  }
 
-    // mix in optimization options from build command
-    // TODO: let this be set by the user
-    let optimizeOptions = {
-      html: Object.assign({removeComments: true}, options.html),
-      css: Object.assign({stripWhitespace: true}, options.css),
-      js: Object.assign({minify: true}, options.js),
-    };
+  // mix in optimization options from build command
+  // TODO: let this be set by the user
+  let optimizeOptions = {
+    html: Object.assign({removeComments: true}, options.html),
+    css: Object.assign({stripWhitespace: true}, options.css),
+    js: Object.assign({minify: true}, options.js),
+  };
 
+  logger.info(`Cleaning build/ directory...`);
+
+  return <Promise<void>>del([UNBUNDLED_BUILD_DIR, BUNDLED_BUILD_DIR]).then(() => {
+    logger.debug(`build/ directory cleaned.`);
     logger.info(`Building application...`);
 
     logger.debug(`Reading source files...`);
@@ -102,12 +107,12 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
             polymerProject.analyzer)
         )
       )
-      .pipe(gulp.dest('build/unbundled'));
+      .pipe(gulp.dest(UNBUNDLED_BUILD_DIR));
 
     let bundledPhase = forkStream(buildStream)
       .once('data', () => { logger.info('Generating build/bundled...'); })
       .pipe(polymerProject.bundler)
-      .pipe(gulp.dest('build/bundled'));
+      .pipe(gulp.dest(BUNDLED_BUILD_DIR));
 
     let swPrecacheConfig = path.resolve(polymerProject.root, options.swPrecacheConfig || 'sw-precache-config.js');
     let loadSWConfig = parsePreCacheConfig(swPrecacheConfig);
@@ -124,7 +129,7 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
     let unbundledPostProcessing = Promise.all([loadSWConfig, waitFor(unbundledPhase)]).then((results) => {
       let swConfig: SWConfig = results[0];
       return addServiceWorker({
-        buildRoot: 'build/unbundled',
+        buildRoot: UNBUNDLED_BUILD_DIR,
         project: polymerProject,
         swConfig: swConfig,
       });
@@ -134,17 +139,13 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
     let bundledPostProcessing = Promise.all([loadSWConfig, waitFor(bundledPhase)]).then((results) => {
       let swConfig: SWConfig = results[0];
       return addServiceWorker({
-        buildRoot: 'build/bundled',
+        buildRoot: BUNDLED_BUILD_DIR,
         project: polymerProject,
         swConfig: swConfig,
         bundled: true,
       });
     });
 
-    return Promise.all([unbundledPostProcessing, bundledPostProcessing]).then(() => {
-      logger.info('Build complete!');
-      buildResolve();
-    });
-
-  });
+    return Promise.all([unbundledPostProcessing, bundledPostProcessing]);
+  }).then(() => logger.info('Build complete!'));
 }

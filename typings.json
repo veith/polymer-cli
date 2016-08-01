@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "chalk": "registry:npm/chalk#1.0.0+20160211003958",
+    "del": "registry:npm/del#2.2.0+20160416211512",
     "orchestrator": "registry:npm/orchestrator#0.3.7+20160211003958",
     "through2": "registry:npm/through2#2.0.0+20160308004148"
   }
