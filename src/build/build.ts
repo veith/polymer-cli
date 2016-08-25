@@ -10,7 +10,7 @@
 
 import clone = require('clone');
 import * as fs from 'fs';
-import {dest} from 'vinyl-fs';
+import {src, dest} from 'vinyl-fs';
 import * as gulpif from 'gulp-if';
 import * as gutil from 'gulp-util';
 import mergeStream = require('merge-stream');
@@ -113,6 +113,14 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
     loadSWConfig.then((swConfig) => {
       if (swConfig) {
         logger.debug(`Service worker config found`, swConfig);
+        // Copy the files which are defined in swConfig.staticFileGlobs to build/..
+        let staticFileGlobs = swConfig.staticFileGlobs.map(function (g) {
+          return path.join(polymerProject.root, g);
+        });
+        src(staticFileGlobs, {base: polymerProject.root})
+            .pipe(dest('build/bundled'))
+            .pipe(dest('build/unbundled'));
+        logger.info('Copy staticFileGlobs...');
       } else {
         logger.debug(`No service worker configuration found at ${swPrecacheConfig}, continuing with defaults`);
       }
@@ -121,6 +129,7 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
     // Once the unbundled build stream is complete, create a service worker for the build
     let unbundledPostProcessing = Promise.all([loadSWConfig, waitFor(unbundledPhase)]).then((results) => {
       let swConfig: SWConfig = results[0];
+      logger.info('Create a service worker for unbundled...');
       return addServiceWorker({
         buildRoot: 'build/unbundled',
         project: polymerProject,
@@ -131,6 +140,7 @@ export function build(options: BuildOptions, config: ProjectConfig): Promise<any
     // Once the bundled build stream is complete, create a service worker for the build
     let bundledPostProcessing = Promise.all([loadSWConfig, waitFor(bundledPhase)]).then((results) => {
       let swConfig: SWConfig = results[0];
+      logger.info('Create a service worker for bundled...');
       return addServiceWorker({
         buildRoot: 'build/bundled',
         project: polymerProject,
